@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import br.com.fiap.validacaoquod.model.FraudeModel;
 import br.com.fiap.validacaoquod.repository.FraudeRepository;
+import br.com.fiap.validacaoquod.service.S3Service;
 import br.com.fiap.validacaoquod.util.ValidacaoFraude;
 import br.com.fiap.validacaoquod.util.ValidacaoSelfie;
 
@@ -33,42 +34,52 @@ public class FraudeController {
     @Autowired
     private FraudeRepository fraudeRepository;
 
+    @Autowired
+    private S3Service s3Service;
+
     @PostMapping(consumes = {"multipart/form-data"}, produces = {"application/json"})
     public ResponseEntity<?> salvarFraude(
             @RequestParam("dados") String dadosJson, 
-            @RequestParam("documento") MultipartFile file,
+            @RequestParam("documento") MultipartFile documento,
             @RequestParam("selfie1") MultipartFile selfieNeutra, 
             @RequestParam("selfie2") MultipartFile selfieSorrindo) {
 
         try {
-            // Verificação inicial
-            if (file.isEmpty() || selfieNeutra.isEmpty() || selfieSorrindo.isEmpty()) {
+            if (documento.isEmpty() || selfieNeutra.isEmpty() || selfieSorrindo.isEmpty()) {
                 return ResponseEntity.badRequest().body("Erro: Todas as imagens devem ser enviadas.");
             }
 
-            // Inicialização de objetos e variáveis principais
             ObjectMapper objectMapper = new ObjectMapper();
             FraudeModel fraude = objectMapper.readValue(dadosJson, FraudeModel.class);
             Map<String, Object> fraudeDetalhes = new HashMap<>();
             String resultadoFraudeDocumento = "Nenhuma fraude detectada.";
             String motivoFraudeSelfie = "Nenhuma fraude detectada.";
 
+            // Upload para S3 e obtenção das URIs
+            String uriDocumento = s3Service.uploadFile(documento, "documentos/" + documento.getOriginalFilename());
+            String uriSelfieNeutra = s3Service.uploadFile(selfieNeutra, "selfies/seria/" + selfieNeutra.getOriginalFilename());
+            String uriSelfieSorrindo = s3Service.uploadFile(selfieSorrindo, "selfies/sorrindo/" + selfieSorrindo.getOriginalFilename());
+
             // Processamento dos metadados do documento
-            Map<String, Object> documentoJson = extrairMetadadosDocumento(file);
+            Map<String, Object> documentoJson = extrairMetadadosDocumento(documento);
+            documentoJson.put("uri", uriDocumento);
             resultadoFraudeDocumento = ValidacaoFraude.verificarFraude(documentoJson);
             fraudeDetalhes.put("fraudeDocumento", resultadoFraudeDocumento);
             fraude.setDocumento(documentoJson);
 
-            // Extração e preenchimento dos metadados das selfies
-            Map<String, String> metadadosSelfie1 = ValidacaoSelfie.extrairMetadados(selfieNeutra);
-            Map<String, String> metadadosSelfie2 = ValidacaoSelfie.extrairMetadados(selfieSorrindo);
+           // Extração e preenchimento dos metadados das selfies
+           Map<String, String> metadadosSelfie1 = ValidacaoSelfie.extrairMetadados(selfieNeutra);
+           Map<String, String> metadadosSelfie2 = ValidacaoSelfie.extrairMetadados(selfieSorrindo);
 
-            metadadosSelfie1 = ValidacaoSelfie.preencherMetadados(metadadosSelfie1);
-            metadadosSelfie2 = ValidacaoSelfie.preencherMetadados(metadadosSelfie2);
+           metadadosSelfie1 = ValidacaoSelfie.preencherMetadados(metadadosSelfie1);
+           metadadosSelfie2 = ValidacaoSelfie.preencherMetadados(metadadosSelfie2);
 
-            // Validação das selfies
-            boolean mesmaData = ValidacaoSelfie.validarMesmoDia(metadadosSelfie1, metadadosSelfie2);
-            boolean mesmaLocalizacao = ValidacaoSelfie.validarMesmaLocalizacao(metadadosSelfie1, metadadosSelfie2);
+           // Validação das selfies
+           boolean mesmaData = ValidacaoSelfie.validarMesmoDia(metadadosSelfie1, metadadosSelfie2);
+           boolean mesmaLocalizacao = ValidacaoSelfie.validarMesmaLocalizacao(metadadosSelfie1, metadadosSelfie2);        
+
+            metadadosSelfie1.put("uri", uriSelfieNeutra);
+            metadadosSelfie2.put("uri", uriSelfieSorrindo);
 
             if (!mesmaData || !mesmaLocalizacao) {
                 StringBuilder fraudeSelfieMsg = new StringBuilder("Fraude detectada nas selfies!\n");
@@ -95,8 +106,8 @@ public class FraudeController {
             if (!errosFraude.isEmpty()) {
                 
                 //chamar ferramenta de alerta
-                System.out.println("🚨 Fraude detectada! Enviando alerta...");
-                System.out.println(errosFraude);
+                // System.out.println("🚨 Fraude detectada! Enviando alerta...");
+                // System.out.println(errosFraude);
                 fraudeDetalhes.put("status", "NOK");
             } else {
                 fraudeDetalhes.put("status", "OK");
@@ -110,10 +121,8 @@ public class FraudeController {
             return ResponseEntity.ok(fraudeSalva);
 
         } catch (IOException e) {
-            e.printStackTrace();
             return ResponseEntity.internalServerError().body("Erro ao processar a imagem: " + e.getMessage());
         } catch (Exception e) {
-            e.printStackTrace();
             return ResponseEntity.internalServerError().body("Erro inesperado: " + e.getMessage());
         }
     }
