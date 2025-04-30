@@ -8,14 +8,18 @@ import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.drew.imaging.ImageMetadataReader;
 import com.drew.metadata.Directory;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.Tag;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import br.com.fiap.validacaoquod.model.FraudeModel;
 import br.com.fiap.validacaoquod.repository.FraudeRepository;
@@ -35,76 +39,81 @@ public class FraudeController {
             @RequestParam("documento") MultipartFile file,
             @RequestParam("selfie1") MultipartFile selfieNeutra, 
             @RequestParam("selfie2") MultipartFile selfieSorrindo) {
+
         try {
+            // Verificação inicial
             if (file.isEmpty() || selfieNeutra.isEmpty() || selfieSorrindo.isEmpty()) {
                 return ResponseEntity.badRequest().body("Erro: Todas as imagens devem ser enviadas.");
             }
 
+            // Inicialização de objetos e variáveis principais
             ObjectMapper objectMapper = new ObjectMapper();
             FraudeModel fraude = objectMapper.readValue(dadosJson, FraudeModel.class);
-
-            Map<String, Object> fraudeDetalhes = new HashMap<>(); // Criando registro de fraude
+            Map<String, Object> fraudeDetalhes = new HashMap<>();
+            String resultadoFraudeDocumento = "Nenhuma fraude detectada.";
+            String motivoFraudeSelfie = "Nenhuma fraude detectada.";
 
             // Processamento dos metadados do documento
-            try (InputStream input = file.getInputStream()) {
-                Metadata metadata = ImageMetadataReader.readMetadata(input);
-                Map<String, Object> documentoJson = new HashMap<>();
+            Map<String, Object> documentoJson = extrairMetadadosDocumento(file);
+            resultadoFraudeDocumento = ValidacaoFraude.verificarFraude(documentoJson);
+            fraudeDetalhes.put("fraudeDocumento", resultadoFraudeDocumento);
+            fraude.setDocumento(documentoJson);
 
-                for (Directory directory : metadata.getDirectories()) {
-                    Map<String, Object> tags = new HashMap<>();
-                    for (Tag tag : directory.getTags()) {
-                        tags.put(tag.getTagName(), tag.getDescription());
-                    }
-                    documentoJson.put(directory.getName(), tags);
-                }
-
-                // Verifica fraude no documento
-                String resultadoFraudeDocumento = ValidacaoFraude.verificarFraude(documentoJson);
-                fraudeDetalhes.put("fraudeDocumento", resultadoFraudeDocumento);
-
-                fraude.setDocumento(documentoJson);
-            }
-
-            // **Validação das selfies**
+            // Extração e preenchimento dos metadados das selfies
             Map<String, String> metadadosSelfie1 = ValidacaoSelfie.extrairMetadados(selfieNeutra);
             Map<String, String> metadadosSelfie2 = ValidacaoSelfie.extrairMetadados(selfieSorrindo);
 
-            boolean valido = ValidacaoSelfie.validarMesmaDataELocalizacao(metadadosSelfie1, metadadosSelfie2);
-            String motivoFraudeSelfie;
+            metadadosSelfie1 = ValidacaoSelfie.preencherMetadados(metadadosSelfie1);
+            metadadosSelfie2 = ValidacaoSelfie.preencherMetadados(metadadosSelfie2);
 
-            if (!valido) {
-                motivoFraudeSelfie = String.format(
-                    "Fraude detectada nas selfies! Diferenças encontradas:\n" +
-                    "- Data da selfie 1: %s\n" +
-                    "- Data da selfie 2: %s\n" +
-                    "- Localização da selfie 1 (Lat/Lon): %s, %s\n" +
-                    "- Localização da selfie 2 (Lat/Lon): %s, %s",
-                    metadadosSelfie1.getOrDefault("Date/Time Original", "Não encontrado"),
-                    metadadosSelfie2.getOrDefault("Date/Time Original", "Não encontrado"),
-                    metadadosSelfie1.getOrDefault("GPS Latitude", "Não encontrado"),
-                    metadadosSelfie1.getOrDefault("GPS Longitude", "Não encontrado"),
-                    metadadosSelfie2.getOrDefault("GPS Latitude", "Não encontrado"),
-                    metadadosSelfie2.getOrDefault("GPS Longitude", "Não encontrado")
-                );
-            } else {
-                motivoFraudeSelfie = "✅ Nenhuma anomalia detectada nas selfies.";
+            // Validação das selfies
+            boolean mesmaData = ValidacaoSelfie.validarMesmoDia(metadadosSelfie1, metadadosSelfie2);
+            boolean mesmaLocalizacao = ValidacaoSelfie.validarMesmaLocalizacao(metadadosSelfie1, metadadosSelfie2);
+
+            if (!mesmaData || !mesmaLocalizacao) {
+                StringBuilder fraudeSelfieMsg = new StringBuilder("Fraude detectada nas selfies!\n");
+
+                if (!mesmaData) {
+                    fraudeSelfieMsg.append("- Motivo: As selfies não foram tiradas no mesmo dia.\n");
+                }
+                if (!mesmaLocalizacao) {
+                    fraudeSelfieMsg.append("- Motivo: As selfies não foram tiradas no mesmo local.\n");
+                }
+
+                motivoFraudeSelfie = fraudeSelfieMsg.toString();
             }
 
-            fraude.setSelfSeria(new HashMap<>(metadadosSelfie1));
-            fraude.setSelfSorrindo(new HashMap<>(metadadosSelfie2));
             fraudeDetalhes.put("fraudeSelfie", motivoFraudeSelfie);
 
-            fraude.setIndicativoFraude(fraudeDetalhes); // Adicionando o motivo da fraude ao banco
+            // Configuração final antes de salvar no banco
+            fraude.setSelfSeria(new HashMap<>(metadadosSelfie1));
+            fraude.setSelfSorrindo(new HashMap<>(metadadosSelfie2));
+            
 
-            // Salva no banco
+            // Validação final e envio de alerta
+            String errosFraude = ValidacaoFraude.validarMensagemFraude(fraudeDetalhes, resultadoFraudeDocumento);
+            if (!errosFraude.isEmpty()) {
+                
+                //chamar ferramenta de alerta
+                System.out.println("🚨 Fraude detectada! Enviando alerta...");
+                System.out.println(errosFraude);
+                fraudeDetalhes.put("status", "NOK");
+            } else {
+                fraudeDetalhes.put("status", "OK");
+                
+            }
+
+            fraude.setIndicativoFraude(fraudeDetalhes);
+
+            // Salvar no banco
             FraudeModel fraudeSalva = fraudeRepository.save(fraude);
             return ResponseEntity.ok(fraudeSalva);
-            
+
         } catch (IOException e) {
-            e.printStackTrace(); 
+            e.printStackTrace();
             return ResponseEntity.internalServerError().body("Erro ao processar a imagem: " + e.getMessage());
         } catch (Exception e) {
-            e.printStackTrace(); 
+            e.printStackTrace();
             return ResponseEntity.internalServerError().body("Erro inesperado: " + e.getMessage());
         }
     }
@@ -112,5 +121,25 @@ public class FraudeController {
     @GetMapping
     public List<FraudeModel> getAllFraudes() {
         return fraudeRepository.findAll();
+    }
+
+    private Map<String, Object> extrairMetadadosDocumento(MultipartFile file) {
+        Map<String, Object> documentoJson = new HashMap<>();
+
+        try (InputStream input = file.getInputStream()) {
+            Metadata metadata = ImageMetadataReader.readMetadata(input);
+
+            for (Directory directory : metadata.getDirectories()) {
+                Map<String, Object> tags = new HashMap<>();
+                for (Tag tag : directory.getTags()) {
+                    tags.put(tag.getTagName(), tag.getDescription());
+                }
+                documentoJson.put(directory.getName(), tags);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return documentoJson;
     }
 }

@@ -22,10 +22,28 @@ public class ValidacaoFraude {
 
         // Retorna alerta de possível fraude
         if (compressaoSuspeita || filtroSuspeito) {
-            return "⚠️ Suspeita de fraude detectada! Compression Type: " + compressionType + 
+            return "Suspeita de fraude detectada! Compression Type: " + compressionType + 
                    ", Filter Method: " + filterMethod;
         }
 
-        return "✅ Nenhuma anomalia detectada no documento.";
+        return "Nenhuma fraude detectada.";
     }
+
+    public static String validarMensagemFraude(Map<String, Object> fraudeDetalhes, String resultadoFraudeDocumento) {
+        StringBuilder errosFraude = new StringBuilder();
+
+        // Verifica fraude nas selfies
+        String fraudeSelfieMsg = (String) fraudeDetalhes.get("fraudeSelfie");
+        if (!"Nenhuma fraude detectada.".equals(fraudeSelfieMsg)) {
+            errosFraude.append("Erro nas selfies: ").append(fraudeSelfieMsg).append("\n");
+        }
+
+        // Verifica fraude no documento
+        if (!"Nenhuma fraude detectada.".equals(resultadoFraudeDocumento)) {
+            errosFraude.append("Erro no documento: ").append(resultadoFraudeDocumento).append("\n");
+        }
+
+        return errosFraude.toString().trim();
+    }
+
 }
