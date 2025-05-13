@@ -13,7 +13,7 @@ public class CorsConfig {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/api/**")
-                        .allowedOrigins("http://127.0.0.1:5173")
+                        .allowedOrigins("http://127.0.0.1:5173", "http://localhost:5174")
                         .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE")
                         .allowedHeaders("*")  // Permite todos os headers
                         .allowCredentials(true); // Permite envio de credenciais
