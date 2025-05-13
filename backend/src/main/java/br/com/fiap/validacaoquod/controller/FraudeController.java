@@ -8,6 +8,7 @@ import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,6 +28,7 @@ import br.com.fiap.validacaoquod.service.S3Service;
 import br.com.fiap.validacaoquod.util.ValidacaoFraude;
 import br.com.fiap.validacaoquod.util.ValidacaoSelfie;
 
+@CrossOrigin(origins = "http://localhost:5173")
 @RestController
 @RequestMapping("/api/notificacoes/fraude")
 public class FraudeController {
